@@ -133,7 +133,7 @@ def load_pipelines() -> None:
     # To load data from pipelines in "deals" endpoint
     load_data = hubspot().with_resources("pipelines_deals", "stages_timing_deals")
     load_info = p.run(load_data)
-    print(load_info)
+    print(load_info) 
 
 
 def load_web_analytics_events(
