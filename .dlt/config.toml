@@ -1,0 +1,10 @@
+
+# DLT runtime configuration
+[runtime]
+log_level = "WARNING"
+dlthub_telemetry = true
+
+# MinIO filesystem destination
+[destination.filesystem]
+bucket_url = "s3://hubspot-data/hubspot"
+layout = "{table_name}/year={YYYY}/month={MM}/{load_id}.{file_id}.{ext}"
