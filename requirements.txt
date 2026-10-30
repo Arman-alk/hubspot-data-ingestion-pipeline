@@ -1,1 +1,5 @@
 dlt[filesystem]>=0.5.1
+clickhouse-connect>=0.7.0
+python-dotenv>=1.0.0
+pyarrow>=14.0.0
+pendulum>=3.0.0

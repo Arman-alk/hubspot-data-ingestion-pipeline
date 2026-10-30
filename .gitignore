@@ -7,6 +7,7 @@
 .dlt/.sources
 .dlt/state/
 .dlt/data/
+.dlt/pipelines/
 __pycache__/
 *.py[cod]
 

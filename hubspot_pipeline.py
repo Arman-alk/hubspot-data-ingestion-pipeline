@@ -7,18 +7,17 @@ from hubspot import hubspot, hubspot_events_for_objects, THubspotObjectType
 
 def load_crm_data() -> None:
     """
-    This function loads all resources from HubSpot CRM
-
-    Returns:
-        None
+    Loads HubSpot CRM resources incrementally into MinIO filesystem (Parquet format)
+    using timestamp cursors (lastmodifieddate / hs_lastmodifieddate).
+    Checkpoints and pipeline states are stored locally in `.dlt/pipelines`.
     """
 
-    # Create a DLT pipeline object with the pipeline name, dataset name, and destination database type
-    # Add full_refresh=(True or False) if you need your pipeline to create the dataset in your destination
+    # Create a DLT pipeline object with persistent local checkpoints
     p = dlt.pipeline(
         pipeline_name="hubspot",
         dataset_name="hubspot_dataset",
         destination='filesystem',
+        pipelines_dir=".dlt/pipelines",
     )
 
     # Run the pipeline with the HubSpot source connector
@@ -31,8 +30,21 @@ def load_crm_data() -> None:
         "pipelines_deals",
     ]
 
+    hubspot_source = hubspot().with_resources(*resources_to_load)
+
+    # Add Incremental cursors
+    hubspot_source.contacts.apply_hints(
+        incremental=dlt.sources.incremental("lastmodifieddate")
+    )
+    hubspot_source.companies.apply_hints(
+        incremental=dlt.sources.incremental("hs_lastmodifieddate")
+    )
+    hubspot_source.deals.apply_hints(
+        incremental=dlt.sources.incremental("hs_lastmodifieddate")
+    )
+
     info = p.run(
-        hubspot().with_resources(*resources_to_load),
+        hubspot_source,
         loader_file_format="parquet",
     )
 

@@ -1,288 +1,153 @@
-# django-backend-project
-Django Backend Internship Assignment
-# HubSpot Data Ingestion Pipeline
+# HubSpot Data Ingestion Pipeline (Production-Grade ELT)
 
-A data engineering project to extract CRM data from HubSpot, store compressed Parquet files in MinIO, and load the data into ClickHouse for analytics.
+A robust Data Engineering pipeline that extracts CRM data from the **HubSpot API**, lands compressed **Parquet files in MinIO (S3)**, and incrementally loads and deduplicates data into a **ClickHouse Analytical Warehouse** using `ReplacingMergeTree`.
 
-## 📌 Project Overview
+---
 
-The goal of this project is to build a reliable and scalable data ingestion pipeline using Python and `dlt` (Data Load Tool).
+## 📌 Project Architecture
 
-The pipeline will support incremental data ingestion, persistent checkpoints, parallel processing, and crash recovery to minimize duplicate records and prevent data loss.
+```text
+       ┌────────────────────────┐
+       │     HubSpot CRM API    │
+       └───────────┬────────────┘
+                   │
+                   ▼  (dlt with incremental cursors: lastmodifieddate / hs_lastmodifieddate)
+       ┌────────────────────────┐
+       │  Extraction & Ingestion│
+       │   (Local Checkpoints)  │
+       └───────────┬────────────┘
+                   │
+                   ▼  (Partitioned Parquet /year=YYYY/month=MM/)
+       ┌────────────────────────┐
+       │   MinIO Object Storage │  (S3 Data Lake)
+       └───────────┬────────────┘
+                   │
+                   ▼  (Idempotent ClickHouse s3() Engine + ReplacingMergeTree)
+       ┌────────────────────────┐
+       │  ClickHouse Warehouse  │  (hubspot_dataset)
+       │  (Contacts, Companies, │
+       │   Deals, Owners, etc.) │
+       └───────────┬────────────┘
+                   │
+                   ▼
+       ┌────────────────────────┐
+       │    Analytical Views    │  (v_deal_pipeline_summary, v_company_deal_analytics)
+       └────────────────────────┘
+```
 
-## 🎯 Objectives
-
-- Extract CRM data from the HubSpot API.
-- Use `dlt` to manage data extraction and pipeline state.
-- Store compressed Parquet files in MinIO object storage.
-- Load ingested data into ClickHouse for analytical queries.
-- Implement incremental ingestion using updated-at timestamps.
-- Support pause and resume functionality.
-- Recover safely from unexpected process termination.
-- Support parallel ingestion of multiple resources.
-- Build analytical views joining Deals, Companies, and Pipelines.
+---
 
 ## 🛠️ Technology Stack
 
-| Component | Technology |
-|---|---|
-| Programming Language | Python |
-| Data Ingestion | dlt |
-| Source API | HubSpot CRM API |
-| Data Format | Parquet |
-| Object Storage | MinIO |
-| Analytics Database | ClickHouse |
-| Containerization | Docker |
-| Configuration | Python dotenv, TOML |
+| Component | Technology | Description |
+|---|---|---|
+| **Language** | Python 3.10+ | Core pipeline logic & orchestration |
+| **Ingestion Engine** | `dlt` (Data Load Tool) | Handles cursor-based incremental sync & schema inference |
+| **Data Lake** | MinIO (S3 Compatible) | Stores partitioned, columnar Parquet files |
+| **Analytical Warehouse**| ClickHouse | Ultra-fast column-oriented database with `ReplacingMergeTree` |
+| **Containerization** | Docker & Docker Compose | Local MinIO & ClickHouse cluster |
+| **Deduplication** | ReplacingMergeTree + OPTIMIZE | File-level tracking & record-level deduplication |
 
-## 🏗️ Architecture
+---
+
+## 🚀 Key Features Implemented
+
+1. **Incremental Ingestion (`updatedAt` / `lastmodifieddate` cursor):**
+   - High-watermark timestamp tracking on contacts (`lastmodifieddate`), companies (`hs_lastmodifieddate`), and deals (`hs_lastmodifieddate`).
+   - Prevents redundant full extraction; only new/updated records are pulled.
+
+2. **Persistent Checkpoints & Crash Recovery:**
+   - DLT pipeline states are saved in `.dlt/pipelines/hubspot/` to survive crashes and allow pause/resume.
+
+3. **Multi-Table ClickHouse Loader (`load_all_to_clickhouse.py`):**
+   - Dynamic schema inference and automated table creation.
+   - Idempotent loading via file-tracking table (`hubspot_dataset._loaded_files`).
+   - Row-level deduplication via `ReplacingMergeTree(ORDER BY id)` and `OPTIMIZE TABLE ... FINAL`.
+
+4. **Analytical SQL Views (`create_analytical_views.py`):**
+   - `hubspot_dataset.v_hubspot_deal_pipeline`: Curated view combining Deals, Companies, and Pipelines for instant business reporting.
+   - `hubspot_dataset.v_deal_pipeline_summary`: Aggregates deal volume and pipeline revenue.
+   - `hubspot_dataset.v_company_deal_analytics`: Joins company profiles with associated deal values.
+   - `hubspot_dataset.v_contact_overview`: Clean view of contacts and recent modifications.
+
+5. **End-to-End Pipeline Automation (`run_pipeline.py`):**
+   - Single command execution with structured logging to terminal and `pipeline_execution.log`.
+
+6. **Crash Recovery & Pause/Resume Demo (`demo_crash_and_recovery.py`):**
+   - Interactive verification script to simulate worker crash, resume from checkpoint, and verify zero duplicate insertion.
+
+---
+
+## 📂 Project Structure
 
 ```text
-HubSpot CRM API
-       |
-       v
- Python + dlt
-       |
-       v
- Data Extraction
-       |
-       v
- Incremental Processing
-       |
-       v
- Compressed Parquet Files
-       |
-       v
- MinIO Object Storage
-       |
-       v
- ClickHouse
-       |
-       v
- Analytical Views & Queries
+django-backend-project/
+├── .dlt/
+│   ├── config.toml               # Destination filesystem & bucket configuration
+│   └── secrets.toml              # API keys & MinIO secrets (strictly git-ignored)
+├── hubspot/                      # HubSpot dlt source connector & helpers
+├── docker-compose.yml            # MinIO & ClickHouse container setup
+├── hubspot_pipeline.py           # DLT extraction script with incremental cursors
+├── load_all_to_clickhouse.py     # Multi-table ClickHouse loader with deduplication
+├── create_analytical_views.py    # ClickHouse analytical SQL views
+├── demo_crash_and_recovery.py    # Crash recovery & pause/resume review demo
+├── run_pipeline.py               # Master orchestration script
+├── requirements.txt              # Project dependencies
+├── .env.example                  # Environment template
+├── .gitignore                    # Safe git ignore rules
+└── README.md                     # Documentation
 ```
 
-## 📦 Planned Data Resources
+---
 
-The pipeline is intended to ingest the following HubSpot resources:
+## ⚡ Quick Start Guide
 
-- Contacts
-- Companies
-- Deals
-- Tickets
-- Line Items
-- Engagements
-- Pipelines
-- Owners
+### 1. Prerequisites
+Ensure Docker Desktop is installed and running on your machine.
 
-**Note:** Resource support will be verified and implemented as development progresses.
-
-## ⚙️ Prerequisites
-
-Install the following before running the project:
-
-- Python 3.10 or a compatible version supported by the installed dependencies
-- Docker Desktop
-- Git
-- A HubSpot account with the required API permissions
-- Visual Studio Code (recommended)
-
-## 🚀 Getting Started
-
-### 1. Clone the repository
-
-```bash
-git clone <YOUR_GITHUB_REPOSITORY_URL>
-cd hubspot-ingestion
+### 2. Start Services
+```powershell
+docker-compose up -d
 ```
+Verify:
+- MinIO: `http://localhost:9000` (Console: `http://localhost:9001`)
+- ClickHouse HTTP: `http://localhost:8123`
 
-Replace the repository URL with your actual GitHub repository URL.
-
-### 2. Create a virtual environment
-
+### 3. Setup Virtual Environment
 ```powershell
 python -m venv .venv
-```
-
-Activate it in Windows PowerShell:
-
-```powershell
 .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
-### 3. Install dependencies
+### 4. Configure Secrets
+Ensure `.env` and `.dlt/secrets.toml` contain your HubSpot token and MinIO/ClickHouse credentials.
+
+### 5. Run the End-to-End Pipeline
+Execute all stages (Ingestion -> Warehouse Loading -> Views):
+```powershell
+.\.venv\Scripts\python run_pipeline.py
+```
+
+---
+
+## 🔒 Security & Git Hygiene (Task 7 Setup)
+
+Before pushing to GitHub, verify that all sensitive files are excluded:
+```powershell
+git status
+```
+Ensure `.env`, `.dlt/secrets.toml`, `.dlt/pipelines/`, and `.venv/` are **not staged**.
 
 ```powershell
-python -m pip install -r requirements.txt
+git add .
+git commit -m "feat: complete HubSpot incremental ELT pipeline with MinIO and ClickHouse"
+git branch -M main
+git remote add origin <YOUR_GITHUB_REPO_URL>
+git push -u origin main
 ```
 
-### 4. Configure environment variables
-
-Create a `.env` file in the project root:
-
-```dotenv
-HUBSPOT_ACCESS_TOKEN=YOUR_HUBSPOT_SERVICE_KEY
-
-MINIO_ENDPOINT=http://localhost:9000
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=YOUR_MINIO_PASSWORD
-MINIO_BUCKET=hubspot-data
-
-CLICKHOUSE_HOST=localhost
-CLICKHOUSE_PORT=8123
-CLICKHOUSE_USER=default
-CLICKHOUSE_PASSWORD=YOUR_CLICKHOUSE_PASSWORD
-```
-
-Replace the placeholder values with your local credentials.
-
-**Security:** Never commit `.env`, API keys, passwords, or other secrets to GitHub.
-
-### 5. Start MinIO and ClickHouse
-
-Start the Docker services:
-
-```powershell
-docker compose up -d
-```
-
-Check their status:
-
-```powershell
-docker compose ps
-```
-
-### 6. Access the services
-
-| Service | Local URL |
-|---|---|
-| MinIO Console | http://localhost:9001 |
-| MinIO API | http://localhost:9000 |
-| ClickHouse HTTP Interface | http://localhost:8123 |
-
-Create the `hubspot-data` bucket in MinIO if it does not already exist.
-
-### 7. Test the HubSpot connection
-
-Run the existing connection test:
-
-```powershell
-python test_hubspot.py
-```
-
-A successful response should confirm that the HubSpot API is accessible and return the number of contacts retrieved.
-
-## 📁 Project Structure
-
-```text
-hubspot-ingestion/
-│
-├── .dlt/
-│   ├── config.toml
-│   ├── secrets.toml
-│   └── .sources
-│
-├── hubspot/
-│   ├── __init__.py
-│   ├── helpers.py
-│   ├── settings.py
-│   └── utils.py
-│
-├── .venv/
-├── .env
-├── .gitignore
-├── docker-compose.yml
-├── hubspot_pipeline.py
-├── requirements.txt
-├── test_hubspot.py
-└── README.md
-```
-
-*The structure may change as development continues. Do not commit `.env`, `.venv/`, or files containing secrets.*
-
-## 📂 Planned Data Storage Layout
-
-Parquet files will be organized by resource and ingestion date:
-
-```text
-hubspot/
-├── contacts/
-│   └── year=YYYY/month=MM/
-├── companies/
-│   └── year=YYYY/month=MM/
-├── deals/
-│   └── year=YYYY/month=MM/
-├── tickets/
-│   └── year=YYYY/month=MM/
-├── lineitems/
-│   └── year=YYYY/month=MM/
-├── engagements/
-│   └── year=YYYY/month=MM/
-├── pipelines/
-│   └── year=YYYY/month=MM/
-└── owners/
-    └── year=YYYY/month=MM/
-```
-
-This is the intended layout; the final storage configuration is still to be implemented and tested.
-
-## 🔄 Reliability and Incremental Processing
-
-The planned pipeline will include:
-
-- **Incremental ingestion:** Process records based on updated-at timestamps.
-- **Persistent checkpoints:** Save pipeline state so processing can resume after interruption.
-- **Crash recovery:** Resume interrupted ingestion without creating duplicate logical records.
-- **Pause and resume:** Stop and restart ingestion safely.
-- **Parallel processing:** Ingest supported resources concurrently.
-- **Data validation:** Verify ingestion results and database records.
-
-These features will be implemented and tested during development.
-
-## 📊 Analytics
-
-ClickHouse will be used to query ingested CRM data and build analytical views.
-
-A planned analytical view will join:
-
-- Deals
-- Companies
-- Pipelines
-
-This will support reporting and analysis of CRM activity.
-
-## 🧪 Testing Plan
-
-- [x] HubSpot API connection test
-- [x] Docker services started
-- [x] ClickHouse connectivity verified
-- [x] MinIO bucket created
-- [ ] Configure `dlt` credentials
-- [ ] Run the first `dlt` ingestion
-- [ ] Store compressed Parquet files in MinIO
-- [ ] Load data into ClickHouse
-- [ ] Implement incremental checkpoints
-- [ ] Test pause and resume
-- [ ] Test forced-termination recovery
-- [ ] Verify duplicate prevention
-- [ ] Implement parallel ingestion
-- [ ] Build analytical views
-
-## 🔐 Security Notes
-
-- Keep API tokens and passwords in local configuration files.
-- Add `.env` and `.venv/` to `.gitignore`.
-- Use least-privilege HubSpot permissions.
-- Do not publish credentials in source code, logs, screenshots, or GitHub commits.
-
-## 📌 Current Development Status
-
-The initial development environment is configured. The HubSpot API connection has been tested successfully, and the MinIO and ClickHouse Docker services are running.
-
-The next step is to configure the generated `dlt` HubSpot source and run the first ingestion test.
+---
 
 ## 👨‍💻 Author
-
-**Arman Ansary**
-
-Data Engineering Project — HubSpot Data Ingestion Pipeline (BE-2)
+**Arman Ansary** — Data Engineering Project

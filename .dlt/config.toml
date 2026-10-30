@@ -1,8 +1,17 @@
-
 # DLT runtime configuration
 [runtime]
 log_level = "WARNING"
 dlthub_telemetry = true
+
+# Parallel execution across resources
+[extract]
+workers = 4
+
+[normalize]
+workers = 4
+
+[load]
+workers = 4
 
 # MinIO filesystem destination
 [destination.filesystem]
